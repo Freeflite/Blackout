@@ -9,7 +9,7 @@ use eframe::egui;
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SW_RESTORE, SetForegroundWindow, ShowWindow};
 use windows::core::{PCWSTR, w};
 
-use crate::hotkey::Hotkey;
+use crate::hotkey::{Hotkey, Key};
 use crate::ipc::{self, HotkeyStatus};
 use crate::monitors::{self, Monitor};
 use crate::settings::Settings;
@@ -45,6 +45,12 @@ pub fn run() {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Capture {
+    Hotkey,
+    WakeKey,
+}
+
 struct SettingsApp {
     settings: Settings,
     /// When the settings last changed without being saved yet.
@@ -53,8 +59,9 @@ struct SettingsApp {
     monitors: Vec<Monitor>,
     /// Monitor ID → whether its backlight can be turned down; filled in by a background probe.
     dimmable: Arc<Mutex<HashMap<String, bool>>>,
-    capturing_hotkey: bool,
-    hotkey_error: Option<String>,
+    /// Which key setting is waiting for a key press, if any.
+    capturing: Option<Capture>,
+    capture_error: Option<(Capture, String)>,
     autostart: bool,
     engine: Option<HotkeyStatus>,
     engine_checked: Instant,
@@ -86,8 +93,8 @@ impl SettingsApp {
             dirty_since,
             monitors,
             dimmable,
-            capturing_hotkey: false,
-            hotkey_error: None,
+            capturing: None,
+            capture_error: None,
             autostart: autostart::is_enabled(),
             engine: ipc::engine_status(),
             engine_checked: Instant::now(),
@@ -235,68 +242,99 @@ impl SettingsApp {
     fn hotkey_section(&mut self, ui: &mut egui::Ui) {
         ui.heading("Hotkey");
         ui.horizontal(|ui| {
-            let text = if self.capturing_hotkey { "Press the new hotkey…".to_string() } else { self.settings.hotkey.clone() };
-            if ui.add(egui::Button::new(text).selected(self.capturing_hotkey)).clicked() && !self.capturing_hotkey {
-                self.capturing_hotkey = true;
-                self.hotkey_error = None;
+            self.capture_button(ui, Capture::Hotkey, self.settings.hotkey.clone());
+            ui.label("turns a blackout on and off");
+        });
+        self.capture_hint(ui, Capture::Hotkey);
+    }
+
+    /// A button showing a key setting; click it, then press the key (or combination) to use.
+    fn capture_button(&mut self, ui: &mut egui::Ui, which: Capture, current: String) {
+        let capturing = self.capturing == Some(which);
+        let text = if capturing { "Press a key…".to_string() } else { current };
+        let button = ui.add(egui::Button::new(text).selected(capturing)).on_hover_text("Click to change");
+        if button.clicked() && self.capturing.is_none() {
+            self.capturing = Some(which);
+            self.capture_error = None;
+            if which == Capture::Hotkey {
+                // Otherwise the tray copy would take a press of its own hotkey for itself.
                 ipc::post(ipc::WM_SUSPEND_HOTKEY, 1);
             }
-            ui.label(if self.capturing_hotkey { "Esc cancels" } else { "Click to change" });
-        });
-        if let Some(error) = &self.hotkey_error {
-            ui.colored_label(ui.visuals().warn_fg_color, error);
-        }
-        if self.capturing_hotkey {
-            self.capture_hotkey(ui);
         }
     }
 
-    fn capture_hotkey(&mut self, ui: &egui::Ui) {
-        for event in ui.input(|input| input.events.clone()) {
+    fn capture_hint(&self, ui: &mut egui::Ui, which: Capture) {
+        if let Some((failed, error)) = &self.capture_error
+            && *failed == which
+        {
+            ui.colored_label(ui.visuals().warn_fg_color, error);
+        } else if self.capturing == Some(which) {
+            ui.label(egui::RichText::new("Press the key to use. Esc cancels.").weak());
+        }
+    }
+
+    /// Takes the next key press for the setting being captured. Runs before the buttons are drawn, so
+    /// a key that activated a button doesn't also get captured by it.
+    fn handle_capture(&mut self, ctx: &egui::Context) {
+        let Some(which) = self.capturing else { return };
+        for event in ctx.input(|input| input.events.clone()) {
             let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
             if key == egui::Key::Escape {
                 self.end_capture();
                 return;
             }
-            let mut text = String::new();
-            for (held, name) in [(modifiers.ctrl, "Ctrl+"), (modifiers.alt, "Alt+"), (modifiers.shift, "Shift+")] {
-                if held {
-                    text.push_str(name);
+            let result = match which {
+                Capture::Hotkey => {
+                    let mut text = String::new();
+                    for (held, name) in [(modifiers.ctrl, "Ctrl+"), (modifiers.alt, "Alt+"), (modifiers.shift, "Shift+")] {
+                        if held {
+                            text.push_str(name);
+                        }
+                    }
+                    text.push_str(key.name());
+                    Hotkey::parse(&text).map(|hotkey| hotkey.to_string()).map_err(|e| format!("{text} won't work: {e}"))
                 }
-            }
-            text.push_str(key.name());
-            match Hotkey::parse(&text) {
-                Ok(hotkey) => {
-                    self.settings.hotkey = hotkey.to_string();
+                // Modifiers don't matter here: the wake key is grabbed on its own.
+                Capture::WakeKey => Key::parse(key.name()).map(|key| key.name),
+            };
+            match result {
+                Ok(value) => {
+                    match which {
+                        Capture::Hotkey => self.settings.hotkey = value,
+                        Capture::WakeKey => self.settings.wake_key = value,
+                    }
                     self.save();
                     self.end_capture();
                     return;
                 }
-                Err(e) => self.hotkey_error = Some(format!("{text} won't work: {e}")),
+                Err(e) => self.capture_error = Some((which, e)),
             }
         }
     }
 
     fn end_capture(&mut self) {
-        self.capturing_hotkey = false;
-        ipc::post(ipc::WM_SUSPEND_HOTKEY, 0);
+        if self.capturing.take() == Some(Capture::Hotkey) {
+            ipc::post(ipc::WM_SUSPEND_HOTKEY, 0);
+        }
     }
 
     fn full_section(&mut self, ui: &mut egui::Ui) {
         ui.heading("Full blackout");
         ui.label("Every monitor goes black, like for an overnight run.");
         ui.horizontal(|ui| {
-            ui.label("Wake by tapping Enter");
+            ui.label("Wake by tapping");
+            self.capture_button(ui, Capture::WakeKey, self.settings.wake_key().name);
             ui.add(egui::DragValue::new(&mut self.settings.wake_taps).range(2..=5));
             ui.label("times within");
             ui.add(egui::DragValue::new(&mut self.settings.wake_window_secs).range(1.0..=5.0).speed(0.1).suffix(" s"));
         });
+        self.capture_hint(ui, Capture::WakeKey);
         ui.checkbox(&mut self.settings.keep_awake_full, "Keep the PC and displays awake");
     }
 
     fn partial_section(&mut self, ui: &mut egui::Ui) {
         ui.heading("Partial blackout");
-        ui.label("Some monitors stay on. Enter isn't captured, so you can keep typing; the hotkey or the tray icon wakes it.");
+        ui.label("Some monitors stay on. No keys are captured, so you can keep typing; the hotkey or the tray icon wakes it.");
         ui.checkbox(&mut self.settings.keep_awake_partial, "Keep the PC and displays awake")
             .on_hover_text("Off: your normal sleep and screen-off settings still apply");
     }
@@ -315,6 +353,7 @@ impl eframe::App for SettingsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_engine(&ctx);
+        self.handle_capture(&ctx);
         let before = self.settings.clone();
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -338,9 +377,7 @@ impl eframe::App for SettingsApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if self.capturing_hotkey {
-            self.end_capture();
-        }
+        self.end_capture();
         if self.dirty_since.is_some() {
             self.save();
         }

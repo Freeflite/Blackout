@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::hotkey::Key;
 use crate::logfile;
 use crate::monitors::Monitor;
 
@@ -17,7 +18,8 @@ pub struct Settings {
     /// IDs of the monitors to black out when `all_monitors` is off.
     pub selected: Vec<String>,
     pub hotkey: String,
-    /// A full blackout wakes after this many Enter taps within `wake_window_secs`.
+    /// A full blackout wakes after `wake_key` is tapped `wake_taps` times within `wake_window_secs`.
+    pub wake_key: String,
     pub wake_taps: u32,
     pub wake_window_secs: f32,
     /// Turn the backlight down over DDC/CI while blacked out.
@@ -43,6 +45,7 @@ impl Default for Settings {
             all_monitors: true,
             selected: Vec::new(),
             hotkey: "Ctrl+Alt+B".into(),
+            wake_key: "Enter".into(),
             wake_taps: 3,
             wake_window_secs: 2.0,
             dim_backlight: true,
@@ -94,6 +97,11 @@ impl Settings {
             .map_or_else(|| monitor.label(), str::to_string)
     }
 
+    /// The wake key, or Enter if the setting doesn't name a key.
+    pub fn wake_key(&self) -> Key {
+        Key::parse(&self.wake_key).unwrap_or(Key { name: "Enter".into(), vk: 0x0D })
+    }
+
     pub fn wake_taps(&self) -> usize {
         self.wake_taps.clamp(2, 5) as usize
     }
@@ -132,6 +140,7 @@ mod tests {
     fn missing_fields_take_defaults() {
         let settings: Settings = toml::from_str("hotkey = \"Ctrl+Alt+K\"").unwrap();
         assert_eq!(settings.hotkey, "Ctrl+Alt+K");
+        assert_eq!(settings.wake_key().name, "Enter");
         assert_eq!(settings.wake_taps, 3);
         assert!(settings.all_monitors && settings.keep_awake_full && !settings.keep_awake_partial);
     }
@@ -150,9 +159,10 @@ mod tests {
 
     #[test]
     fn wake_limits_are_clamped() {
-        let settings = Settings { wake_taps: 9, wake_window_secs: 0.1, ..Settings::default() };
+        let settings = Settings { wake_taps: 9, wake_window_secs: 0.1, wake_key: "Bogus".into(), ..Settings::default() };
         assert_eq!(settings.wake_taps(), 5);
         assert_eq!(settings.wake_window(), Duration::from_secs(1));
+        assert_eq!(settings.wake_key().vk, 0x0D, "an unknown wake key falls back to Enter");
     }
 
     #[test]

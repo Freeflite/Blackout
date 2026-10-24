@@ -1,8 +1,9 @@
 //! The resident copy: a hidden window that owns the hotkeys and the tray icon, and runs the blackouts.
 //!
-//! A full blackout (every monitor) hides the pointer, grabs Enter for the triple-tap wake and, if the
-//! settings say so, keeps the PC awake. A partial blackout leaves the pointer and Enter alone, since
-//! you're still working on the other monitors; only the hotkey or the tray icon ends it.
+//! A full blackout (every monitor) hides the pointer, grabs the wake key (Enter by default) for the
+//! tap-to-wake and, if the settings say so, keeps the PC awake. A partial blackout leaves the pointer
+//! and the keyboard alone, since you're still working on the other monitors; only the hotkey or the
+//! tray icon ends it.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -13,7 +14,7 @@ use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Power::{ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
-use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey, VK_RETURN};
+use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetSystemMetrics, KillTimer, MSG,
     PostMessageW, PostQuitMessage, RegisterClassW, SM_CXSMICON, SetTimer, SetWindowTextW, TranslateMessage,
@@ -30,7 +31,7 @@ use crate::taps::TapCounter;
 use crate::{ddc, icon_art, ipc, logfile, state};
 
 const HOTKEY_TOGGLE: i32 = 1;
-const HOTKEY_ENTER: i32 = 2;
+const HOTKEY_WAKE: i32 = 2;
 const TIMER_DISPLAY_CHANGED: usize = 1;
 const TIMER_RESUME_HOTKEY: usize = 2;
 /// Monitors come and go in bursts; wait this long for things to settle before redoing a blackout.
@@ -49,6 +50,8 @@ thread_local! {
 static ENGINE_HWND: AtomicIsize = AtomicIsize::new(0);
 
 struct Blackout {
+    /// Every monitor is covered, so the wake key is grabbed.
+    full: bool,
     overlays: Vec<Overlay>,
     dimmed: Vec<Dimmed>,
 }
@@ -213,7 +216,7 @@ impl Engine {
     fn handle(&mut self, msg: u32, wparam: WPARAM) {
         match msg {
             WM_HOTKEY if wparam.0 as i32 == HOTKEY_TOGGLE => self.toggle(),
-            WM_HOTKEY if wparam.0 as i32 == HOTKEY_ENTER => {
+            WM_HOTKEY if wparam.0 as i32 == HOTKEY_WAKE => {
                 if self.taps.tap() {
                     self.stop();
                 }
@@ -275,12 +278,10 @@ impl Engine {
             }
         }
 
-        // Only a full blackout grabs Enter: with a monitor still on, you may be typing on it.
+        // Only a full blackout grabs the wake key: with a monitor still on, you may be typing on it.
         if full {
             self.taps = TapCounter::new(self.settings.wake_taps(), self.settings.wake_window());
-            if let Err(e) = unsafe { RegisterHotKey(Some(self.hwnd), HOTKEY_ENTER, MOD_NOREPEAT, VK_RETURN.0 as u32) } {
-                logfile::write(&format!("can't grab Enter, so only the hotkey wakes this blackout: {e}"));
-            }
+            self.grab_wake_key();
         }
 
         let dimmed = if self.settings.dim_backlight { dim(&targets) } else { Vec::new() };
@@ -290,14 +291,24 @@ impl Engine {
             monitors.len(),
             dimmed.len()
         ));
-        self.active = Some(Blackout { overlays, dimmed });
+        self.active = Some(Blackout { full, overlays, dimmed });
         self.update_tray();
+    }
+
+    fn grab_wake_key(&self) {
+        let key = self.settings.wake_key();
+        unsafe {
+            let _ = UnregisterHotKey(Some(self.hwnd), HOTKEY_WAKE);
+            if let Err(e) = RegisterHotKey(Some(self.hwnd), HOTKEY_WAKE, MOD_NOREPEAT, key.vk) {
+                logfile::write(&format!("can't grab {}, so only the hotkey wakes this blackout: {e}", key.name));
+            }
+        }
     }
 
     fn stop(&mut self) {
         let Some(blackout) = self.active.take() else { return };
         unsafe {
-            let _ = UnregisterHotKey(Some(self.hwnd), HOTKEY_ENTER);
+            let _ = UnregisterHotKey(Some(self.hwnd), HOTKEY_WAKE);
         }
         // Brightness first, while the screens are still black.
         let mut saved = state::load();
@@ -321,6 +332,7 @@ impl Engine {
         let settings = Settings::load();
         let redo = self.active.is_some() && self.settings.blackout_differs(&settings);
         let hotkey_changed = settings.hotkey != self.settings.hotkey;
+        let wake_key_changed = settings.wake_key != self.settings.wake_key;
         self.settings = settings;
         self.taps = TapCounter::new(self.settings.wake_taps(), self.settings.wake_window());
         if !self.hotkey_suspended && (hotkey_changed || self.hotkey.is_none()) {
@@ -329,6 +341,8 @@ impl Engine {
         if redo {
             self.stop();
             self.start();
+        } else if wake_key_changed && self.active.as_ref().is_some_and(|b| b.full) {
+            self.grab_wake_key();
         }
         self.update_tray();
     }

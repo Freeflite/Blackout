@@ -18,6 +18,10 @@ pub struct Hotkey {
 
 /// Named keys besides letters, digits and F1-F24, with their virtual-key codes.
 const NAMED_KEYS: &[(&str, u32)] = &[
+    ("Backspace", 0x08),
+    ("Tab", 0x09),
+    ("Enter", 0x0D),
+    ("Escape", 0x1B),
     ("Space", 0x20),
     ("PageUp", 0x21),
     ("PageDown", 0x22),
@@ -71,6 +75,20 @@ impl Hotkey {
     }
 }
 
+/// A single key with no modifiers, such as the key tapped to wake a full blackout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Key {
+    pub name: String,
+    pub vk: u32,
+}
+
+impl Key {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let text = text.trim();
+        key_code(text).map(|(name, vk)| Key { name, vk }).ok_or_else(|| format!("\"{text}\" isn't a key Blackout knows"))
+    }
+}
+
 impl fmt::Display for Hotkey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (on, name) in [(self.ctrl, "Ctrl+"), (self.alt, "Alt+"), (self.shift, "Shift+"), (self.win, "Win+")] {
@@ -118,6 +136,15 @@ mod tests {
         assert_eq!(Hotkey::parse("Ctrl+F12").unwrap().vk, 0x7B);
         assert_eq!(Hotkey::parse("Win+7").unwrap().vk, 0x37);
         assert_eq!(Hotkey::parse("Ctrl+Shift+Pause").unwrap().vk, 0x13);
+    }
+
+    #[test]
+    fn single_keys_for_waking() {
+        assert_eq!(Key::parse("enter").unwrap(), Key { name: "Enter".into(), vk: 0x0D });
+        assert_eq!(Key::parse(" space ").unwrap().vk, 0x20);
+        assert_eq!(Key::parse("x").unwrap(), Key { name: "X".into(), vk: 0x58 });
+        assert!(Key::parse("Ctrl+B").is_err());
+        assert!(Key::parse("").is_err());
     }
 
     #[test]

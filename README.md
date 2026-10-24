@@ -14,8 +14,8 @@ Which one you get depends on which monitors you've picked in settings.
 | | Full: every monitor | Partial: some monitors stay on |
 |---|---|---|
 | For | Overnight runs | A monitor facing away, a distracting second screen |
-| Wake | Tap **Enter 3 times within 2 seconds**, the hotkey, or the tray icon | The hotkey or the tray icon |
-| Enter | Grabbed system-wide while blacked out, so taps never reach other apps | Left alone, so you can keep typing |
+| Wake | Tap the wake key (**Enter** by default) **3 times within 2 seconds**, the hotkey, or the tray icon | The hotkey or the tray icon |
+| Keyboard | The wake key is grabbed system-wide while blacked out, so taps never reach other apps | Left alone, so you can keep typing |
 | Mouse pointer | Hidden | Normal; the black windows never take focus |
 | Keeps the PC awake | On by default | Off by default (normal sleep settings apply) |
 
@@ -47,7 +47,8 @@ Changes save as you make them and apply straight away.
 - **Monitors:** all of them (including ones you connect later), or just the ones you tick. **Identify**
   shows each monitor's number on its screen. You can give monitors nicknames.
 - **Hotkey:** click it and press a new combination. It needs Ctrl, Alt or Win.
-- **Full blackout:** how many Enter taps, within how long, wake it; whether to keep the PC awake.
+- **Full blackout:** the wake key (click it and press any single key), how many taps within how long
+  wake it, and whether to keep the PC awake.
 - **Partial blackout:** whether to keep the PC awake.
 - **Both:** whether to turn the backlight down; whether to start at sign-in.
 
