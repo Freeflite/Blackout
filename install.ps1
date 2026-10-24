@@ -14,10 +14,13 @@ $startMenuLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'Blackout.
 $desktopLink   = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Blackout.lnk'
 
 function Stop-Blackout {
-    # Ask the copy in the tray to wake and quit, so brightness is put back and the file can be replaced.
+    # Windows won't replace a running .exe. Ask the copy in the tray to wake and quit (so brightness is
+    # put back), and close any open settings window, which saves as it closes.
     if (Test-Path $exe) { Start-Process $exe -ArgumentList '--exit' -Wait }
-    Get-Process blackout -ErrorAction SilentlyContinue | Where-Object Path -eq $exe |
-        Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
+    foreach ($process in @(Get-Process blackout -ErrorAction SilentlyContinue | Where-Object Path -eq $exe)) {
+        if (-not $process.HasExited) { [void]$process.CloseMainWindow() }
+        if (-not $process.WaitForExit(15000)) { $process.Kill() }
+    }
 }
 
 if ($Uninstall) {
