@@ -28,8 +28,19 @@ pub struct Settings {
     pub keep_awake_full: bool,
     /// Keep the PC and displays awake during a partial blackout (some monitors stay on).
     pub keep_awake_partial: bool,
+    /// Light or dark settings window, or whatever Windows is set to.
+    pub theme: Theme,
     /// Every monitor the settings window has seen, so choices and nicknames outlive unplugging.
     pub known: BTreeMap<String, KnownMonitor>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -51,6 +62,7 @@ impl Default for Settings {
             dim_backlight: true,
             keep_awake_full: true,
             keep_awake_partial: false,
+            theme: Theme::System,
             known: BTreeMap::new(),
         }
     }
@@ -137,12 +149,20 @@ mod tests {
     }
 
     #[test]
+    fn theme_is_stored_in_lowercase() {
+        let settings = Settings { theme: Theme::Dark, ..Settings::default() };
+        assert!(toml::to_string(&settings).unwrap().contains("theme = \"dark\""));
+        assert_eq!(toml::from_str::<Settings>("theme = \"light\"").unwrap().theme, Theme::Light);
+    }
+
+    #[test]
     fn missing_fields_take_defaults() {
         let settings: Settings = toml::from_str("hotkey = \"Ctrl+Alt+K\"").unwrap();
         assert_eq!(settings.hotkey, "Ctrl+Alt+K");
         assert_eq!(settings.wake_key().name, "Enter");
         assert_eq!(settings.wake_taps, 3);
         assert!(settings.all_monitors && settings.keep_awake_full && !settings.keep_awake_partial);
+        assert_eq!(settings.theme, Theme::System);
     }
 
     #[test]

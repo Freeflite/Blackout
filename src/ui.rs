@@ -6,16 +6,22 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SW_RESTORE, SetForegroundWindow, ShowWindow};
 use windows::core::{PCWSTR, w};
 
 use crate::hotkey::{Hotkey, Key};
 use crate::ipc::{self, HotkeyStatus};
 use crate::monitors::{self, Monitor};
-use crate::settings::Settings;
-use crate::{autostart, ddc, icon_art, logfile, overlay};
+use crate::settings::{Settings, Theme};
+use crate::{autostart, chrome, ddc, logfile, overlay};
 
 const TITLE: &str = "Blackout settings";
+/// The app icon as raw RGBA, made by build.rs from assets/freeflite.png. It shows while the window
+/// starts up; chrome::set_icons then swaps in sharp copies at the exact title bar sizes.
+const WINDOW_ICON_SIZE: u32 = 64;
+static WINDOW_ICON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/window-icon.rgba"));
 /// Typing a nickname saves once you pause rather than on every keystroke.
 const SAVE_DELAY: Duration = Duration::from_millis(500);
 const STATUS_POLL: Duration = Duration::from_secs(1);
@@ -34,9 +40,13 @@ pub fn run() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITLE)
-            .with_inner_size([600.0, 580.0])
+            .with_inner_size([600.0, 600.0])
             .with_min_inner_size([480.0, 400.0])
-            .with_icon(egui::IconData { rgba: icon_art::icon_rgba(64), width: 64, height: 64 }),
+            .with_icon(egui::IconData {
+                rgba: WINDOW_ICON.to_vec(),
+                width: WINDOW_ICON_SIZE,
+                height: WINDOW_ICON_SIZE,
+            }),
         ..Default::default()
     };
     let result = eframe::run_native(TITLE, options, Box::new(|cc| Ok(Box::new(SettingsApp::new(&cc.egui_ctx)))));
@@ -65,6 +75,10 @@ struct SettingsApp {
     autostart: bool,
     engine: Option<HotkeyStatus>,
     engine_checked: Instant,
+    applied_theme: Option<Theme>,
+    window_icons_set: bool,
+    /// The (dark mode, background, text) colors last given to the title bar.
+    title_bar: Option<(bool, egui::Color32, egui::Color32)>,
 }
 
 impl SettingsApp {
@@ -98,6 +112,38 @@ impl SettingsApp {
             autostart: autostart::is_enabled(),
             engine: ipc::engine_status(),
             engine_checked: Instant::now(),
+            applied_theme: None,
+            window_icons_set: false,
+            title_bar: None,
+        }
+    }
+
+    fn apply_theme(&mut self, ctx: &egui::Context) {
+        if self.applied_theme == Some(self.settings.theme) {
+            return;
+        }
+        ctx.set_theme(match self.settings.theme {
+            Theme::System => egui::ThemePreference::System,
+            Theme::Light => egui::ThemePreference::Light,
+            Theme::Dark => egui::ThemePreference::Dark,
+        });
+        self.applied_theme = Some(self.settings.theme);
+        ctx.request_repaint(); // the new colors take effect on the next pass
+    }
+
+    /// Gives the title bar the FreeFlite icon once, and the current theme's colors whenever they
+    /// change (including when "Match Windows" follows a change in Windows' own setting).
+    fn sync_title_bar(&mut self, visuals: &egui::Visuals, frame: &eframe::Frame) {
+        let Some(hwnd) = window_handle(frame) else { return };
+        if !self.window_icons_set {
+            chrome::set_icons(hwnd);
+            self.window_icons_set = true;
+        }
+        let look = (visuals.dark_mode, visuals.panel_fill, visuals.text_color());
+        if self.title_bar != Some(look) {
+            let rgb = |color: egui::Color32| [color.r(), color.g(), color.b()];
+            chrome::color_title_bar(hwnd, look.0, rgb(look.1), rgb(look.2));
+            self.title_bar = Some(look);
         }
     }
 
@@ -347,11 +393,21 @@ impl SettingsApp {
             self.autostart = autostart;
         }
     }
+
+    fn appearance_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Appearance");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut self.settings.theme, Theme::System, "Match Windows");
+            ui.radio_value(&mut self.settings.theme, Theme::Light, "Light");
+            ui.radio_value(&mut self.settings.theme, Theme::Dark, "Dark");
+        });
+    }
 }
 
 impl eframe::App for SettingsApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.apply_theme(&ctx);
         self.poll_engine(&ctx);
         self.handle_capture(&ctx);
         let before = self.settings.clone();
@@ -368,11 +424,14 @@ impl eframe::App for SettingsApp {
                 self.partial_section(ui);
                 ui.separator();
                 self.general_section(ui);
+                ui.separator();
+                self.appearance_section(ui);
             });
         });
         if self.settings != before {
             self.dirty_since = Some(Instant::now());
         }
+        self.sync_title_bar(ui.visuals(), frame);
         self.save_when_settled(&ctx);
     }
 
@@ -381,6 +440,13 @@ impl eframe::App for SettingsApp {
         if self.dirty_since.is_some() {
             self.save();
         }
+    }
+}
+
+fn window_handle(frame: &eframe::Frame) -> Option<HWND> {
+    match frame.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(HWND(handle.hwnd.get() as _)),
+        _ => None,
     }
 }
 

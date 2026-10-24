@@ -1,7 +1,7 @@
-// The Blackout icon, drawn in code so the tray, the settings window and the .exe share one picture.
-// build.rs include!()s this file too, so it must not reference anything else in the crate.
+// The tray icon, drawn in code: a monitor with a blacked-out screen, which still reads at 16px.
+// (The .exe and the settings window use the FreeFlite artwork in assets/ instead.)
 
-/// RGBA pixels of the icon (a monitor with a blacked-out screen) at `size`×`size`.
+/// RGBA pixels of the tray icon at `size`×`size`.
 pub fn icon_rgba(size: u32) -> Vec<u8> {
     // Rectangles on a 32×32 design grid as (left, top, right, bottom, RGBA); later ones paint over earlier ones.
     const SHAPES: [(f32, f32, f32, f32, [u8; 4]); 5] = [

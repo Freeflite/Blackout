@@ -51,6 +51,7 @@ Changes save as you make them and apply straight away.
   wake it, and whether to keep the PC awake.
 - **Partial blackout:** whether to keep the PC awake.
 - **Both:** whether to turn the backlight down; whether to start at sign-in.
+- **Appearance:** match Windows, light or dark. The title bar takes on the same colors.
 
 ## How monitors are recognized
 
@@ -74,6 +75,8 @@ cargo build --release
 cargo test
 cargo test -- --ignored --nocapture   # also lists this PC's monitors and whether they dim
 ```
+
+The app icon is built from `assets/freeflite.png` at compile time, at every size Windows uses.
 
 ## License
 

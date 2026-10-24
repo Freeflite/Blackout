@@ -7,6 +7,7 @@
 #![windows_subsystem = "windows"]
 
 mod autostart;
+mod chrome;
 mod ddc;
 mod edid;
 mod engine;
