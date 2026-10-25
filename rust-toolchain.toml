@@ -1,0 +1,5 @@
+# One compiler for local builds and CI, so a new Rust release can't change the build or add lints
+# under us. Bump this deliberately.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy"]

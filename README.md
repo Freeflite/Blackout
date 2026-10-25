@@ -1,5 +1,7 @@
 # Blackout
 
+[![CI](https://github.com/Freeflite/Blackout/actions/workflows/ci.yml/badge.svg)](https://github.com/Freeflite/Blackout/actions/workflows/ci.yml)
+
 A small Windows tray app that blacks out some or all of your monitors while the PC keeps working.
 
 The monitors stay powered and connected. Nothing goes to sleep and no DisplayPort monitor drops off,
@@ -21,9 +23,28 @@ Which one you get depends on which monitors you've picked in settings.
 
 The hotkey (**Ctrl+Alt+B** by default) turns a blackout on and off either way.
 
-## Install
+## Download
 
-Needs a Rust toolchain with the MSVC build tools.
+Get **blackout.exe** from the [latest release](https://github.com/Freeflite/Blackout/releases/latest). It's a
+single file with nothing to install:
+
+1. Put it somewhere it can stay, such as `%LOCALAPPDATA%\Programs\Blackout`.
+2. Run it. The first time, it starts in the tray and opens its settings. Tick **Start Blackout when I sign in**
+   there to have it start with Windows.
+
+Windows may show *Windows protected your PC* the first time, because the .exe isn't code-signed. Choose
+**More info**, then **Run anyway**.
+
+Each release is built by GitHub Actions from its tag, and lists the file's SHA-256. To confirm a download
+came from that build, with the [GitHub CLI](https://cli.github.com/):
+
+```powershell
+gh attestation verify blackout.exe -R Freeflite/Blackout
+```
+
+## Install from source
+
+Needs a Rust toolchain with the MSVC build tools (`rust-toolchain.toml` picks the compiler version).
 
 ```powershell
 .\install.ps1                  # build, install for this user, start at sign-in, start it now
@@ -37,7 +58,8 @@ It installs to `%LOCALAPPDATA%\Programs\Blackout` and needs no admin rights. Run
 
 - **Ctrl+Alt+B** blacks out and wakes.
 - The tray icon: **double-click** opens settings; **right-click** for *Black out now*, *Settings…* and *Exit*.
-- `blackout.exe` with no arguments blacks out now, or toggles the copy already in the tray.
+- `blackout.exe` with no arguments blacks out now, or toggles the copy already in the tray. The very first
+  run opens settings instead.
 - `blackout.exe --settings` opens settings, `--resident` starts in the tray, `--exit` wakes and quits.
 
 ## Settings
