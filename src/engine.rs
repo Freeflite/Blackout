@@ -74,12 +74,29 @@ struct Engine {
     toggle_item: MenuItem,
 }
 
-/// Runs the resident copy until it's told to exit. With `blackout_now` it blacks out straight away,
-/// and if a copy is already running, that copy toggles instead.
-pub fn run(blackout_now: bool) {
+/// What the resident copy does once it's up.
+pub enum Start {
+    Idle,
+    Blackout,
+    Settings,
+}
+
+impl Start {
+    fn command(&self) -> Option<u32> {
+        match self {
+            Start::Idle => None,
+            Start::Blackout => Some(ipc::WM_TOGGLE),
+            Start::Settings => Some(ipc::WM_OPEN_SETTINGS),
+        }
+    }
+}
+
+/// Runs the resident copy until it's told to exit. If a copy is already running, `start` is passed
+/// to that one instead (so a second "black out now" toggles it).
+pub fn run(start: Start) {
     let Some(_instance) = ipc::SingleInstance::acquire(w!("Local\\Blackout.Engine")) else {
-        if blackout_now {
-            ipc::post_patiently(ipc::WM_TOGGLE);
+        if let Some(command) = start.command() {
+            ipc::post_patiently(command);
         }
         return;
     };
@@ -114,8 +131,8 @@ pub fn run(blackout_now: bool) {
     ENGINE.with_borrow_mut(|slot| *slot = Some(engine));
     logfile::write("started");
 
-    if blackout_now {
-        post_self(ipc::WM_TOGGLE);
+    if let Some(command) = start.command() {
+        post_self(command);
     }
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {

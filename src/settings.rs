@@ -73,6 +73,11 @@ fn path() -> PathBuf {
 }
 
 impl Settings {
+    /// False until the settings window has been opened once.
+    pub fn exists() -> bool {
+        path().exists()
+    }
+
     pub fn load() -> Self {
         match std::fs::read_to_string(path()) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
